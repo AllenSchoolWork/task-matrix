@@ -1,0 +1,478 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>企業級四象限管理系統</title>
+
+<style>
+:root{
+    --card:#ffffff;
+    --border:#e5e5ea;
+    --accent:#007aff;
+}
+
+body{
+    margin:0;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto;
+    background:linear-gradient(135deg,#f9fafc,#e9f0ff);
+}
+
+.container{
+    position:relative;
+    width:100vw;
+    height:100vh;
+    display:flex;
+    flex-wrap:wrap;
+}
+
+.axis-x{position:absolute;top:50%;left:0;width:100%;height:3px;background:black;z-index:1;}
+.axis-y{position:absolute;left:50%;top:0;height:100%;width:3px;background:black;z-index:1;}
+
+.label{
+    position:absolute;
+    font-weight:800;
+    font-size:35px;
+    z-index:2;
+    background:linear-gradient(135deg,#f9fafc,#e9f0ff);
+    padding:4px 8px;
+}
+
+.important{color:red;top:50%;left:75%;transform:translate(-50%,-50%);}
+.not-important{color:black;top:50%;left:25%;transform:translate(-50%,-50%);}
+.urgent{color:red;top:25%;left:50%;
+transform:translate(-50%,-50%);
+writing-mode:vertical-rl;text-orientation:upright;}
+.not-urgent{color:black;top:75%;left:50%;
+transform:translate(-50%,-50%);
+writing-mode:vertical-rl;text-orientation:upright;}
+
+.quadrant{
+    width:50%;
+    height:50%;
+    box-sizing:border-box;
+    border:1px solid var(--border);
+    position:relative;
+    padding:60px 20px 80px 20px;
+    overflow:hidden; /* 改回隱藏 */
+}
+
+.card-container{
+    position:absolute;
+    top:60px;
+    left:20px;
+    right:20px;
+    bottom:80px;   /* 留給新增按鈕 */
+    overflow-y:auto;
+    overflow-x:hidden;
+    display:flex;
+    flex-wrap:wrap;
+    gap:12px;
+    padding-bottom:20px; /* ⭐ 關鍵：讓最後一排可完整顯示 */
+    box-sizing:border-box;
+}
+
+@media(max-width:768px){
+    .quadrant{width:100%;height:50%;}
+}
+
+.counter{position:absolute;top:10px;right:15px;font-size:14px;font-weight:600;color:#555;}
+
+.add-btn{
+    position:absolute;bottom:20px;right:20px;z-index:20;
+    background:var(--accent);color:white;
+    border:none;border-radius:20px;
+    padding:8px 16px;cursor:pointer;
+}
+
+.clear{
+    position:absolute;top:50%;left:50%;
+    transform:translate(-50%,-50%);
+    color:#bbb;font-size:22px;
+}
+
+
+
+.card{
+    background:var(--card);
+    border-radius:16px;
+    box-shadow:0 6px 20px rgba(0,0,0,0.08);
+    padding:14px;
+    box-sizing:border-box;
+    position:relative;
+    overflow:auto;
+    max-width:100%;
+    word-break:break-word;
+    overflow-wrap:anywhere;
+}
+
+.card h3{margin:0;font-size:1.4rem;font-weight:700;}
+.card p{margin-top:8px;font-size:0.9rem;white-space:pre-wrap;}
+
+.card a{
+    color:#007aff;
+    text-decoration:underline;
+    display:inline-block;
+    max-width:100%;
+    word-break:break-all;
+}
+
+.delete-btn{
+    position:absolute;top:8px;right:10px;
+    color:#ff3b30;cursor:pointer;
+}
+/* 連結提示 */
+.link-hint{
+    position:absolute;
+    background:black;
+    color:white;
+    font-size:12px;
+    padding:4px 8px;
+    border-radius:6px;
+    white-space:nowrap;
+    pointer-events:none;
+    opacity:0;
+    transition:opacity 0.2s;
+    z-index:999;
+}
+.card-container{
+    scroll-behavior:smooth;
+}
+</style>
+</head>
+
+<body>
+
+<div class="container">
+    <div class="axis-x"></div>
+    <div class="axis-y"></div>
+    <div class="label important">重要</div>
+    <div class="label urgent">很急</div>
+    <div class="label not-important">不重要</div>
+    <div class="label not-urgent">不急</div>
+
+    <div class="quadrant" id="q1"></div>
+    <div class="quadrant" id="q2"></div>
+    <div class="quadrant" id="q3"></div>
+    <div class="quadrant" id="q4"></div>
+</div>
+
+<script>
+document.execCommand("defaultParagraphSeparator", false, "div");
+
+const STORAGE_KEY="matrixDataV7";
+// ⭐ 監聽其他裝置更新
+window.addEventListener("storage",(e)=>{
+    if(e.key===STORAGE_KEY){
+        data=JSON.parse(localStorage.getItem(STORAGE_KEY));
+        initQuadrants();
+    }
+});
+let data=JSON.parse(localStorage.getItem(STORAGE_KEY)) || {
+    q1:[],q2:[],q3:[],q4:[]
+};
+
+function save(){
+    localStorage.setItem(STORAGE_KEY,JSON.stringify(data));
+    localStorage.setItem("matrixLastUpdate",Date.now());
+}
+
+function linkify(text){
+    const urlPattern=/https?:\/\/[^\s]+/g;
+    return text.replace(urlPattern,url=>{
+        return `<a href="${url}" target="_blank" rel="noopener">${url}</a>`;
+    });
+}
+
+function createEditable(tag,value,onSave){
+    const el=document.createElement(tag);
+    el.innerHTML=linkify(value);
+    el.contentEditable="false";
+
+    let pressTimer=null;
+    let longPressTriggered=false;
+
+    // ===== 雙擊進入編輯 =====
+    el.addEventListener("dblclick",(e)=>{
+        e.stopPropagation();
+
+        el.contentEditable="true";
+        el.innerText=value;
+        el.focus();
+
+        const range=document.createRange();
+        range.selectNodeContents(el);
+        range.collapse(false);
+        const sel=window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+    });
+
+    // ===== 離開編輯 =====
+    el.addEventListener("blur",()=>{
+        if(el.contentEditable!=="true") return;
+
+        el.contentEditable="false";
+        const pureText=el.innerText.trim();
+        onSave(pureText);
+        el.innerHTML=linkify(pureText);
+    });
+
+    // ===== 桌機：Ctrl + 點擊才允許開啟 =====
+    el.addEventListener("click",(e)=>{
+        if(el.contentEditable==="true") return;
+
+        if(e.target.tagName==="A"){
+            if(!e.ctrlKey){
+                // 非 Ctrl 點擊 → 阻止
+                e.preventDefault();
+            }
+            // 有 Ctrl → 讓瀏覽器自己處理（只會開一次）
+        }
+    });
+
+    // ===== 手機：長按開啟 =====
+    el.addEventListener("touchstart",(e)=>{
+        if(el.contentEditable==="true") return;
+
+        if(e.target.tagName==="A"){
+            longPressTriggered=false;
+
+            pressTimer=setTimeout(()=>{
+                longPressTriggered=true;
+                // 直接讓瀏覽器開啟
+                window.location.href=e.target.href;
+            },600);
+        }
+    });
+
+    el.addEventListener("touchend",(e)=>{
+        clearTimeout(pressTimer);
+
+        if(e.target.tagName==="A" && !longPressTriggered){
+            // 短按 → 阻止
+            e.preventDefault();
+        }
+    });
+
+    el.addEventListener("touchmove",()=>{
+        clearTimeout(pressTimer);
+    });
+
+    // ===== 桌機提示 =====
+    el.addEventListener("mouseover",(e)=>{
+        if(e.target.tagName==="A" && !("ontouchstart" in window)){
+            const hint=document.createElement("div");
+            hint.className="link-hint";
+            hint.innerText="Ctrl+點擊開啟";
+            document.body.appendChild(hint);
+
+            const rect=e.target.getBoundingClientRect();
+            hint.style.left=rect.left+"px";
+            hint.style.top=(rect.top-30)+"px";
+            hint.style.opacity="1";
+
+            e.target._hint=hint;
+        }
+    });
+
+    el.addEventListener("mouseout",(e)=>{
+        if(e.target.tagName==="A" && e.target._hint){
+            e.target._hint.remove();
+            e.target._hint=null;
+        }
+    });
+
+    return el;
+}
+
+function initQuadrants(){
+    Object.keys(data).forEach(q=>{
+        const el=document.getElementById(q);
+        el.innerHTML="";
+
+        el.addEventListener("dragover",e=>e.preventDefault());
+        el.addEventListener("drop",e=>{
+            e.preventDefault();
+            const info=JSON.parse(e.dataTransfer.getData("text"));
+            moveCard(info.from,q,info.index);
+        });
+
+        const counter=document.createElement("div");
+        counter.className="counter";
+        counter.innerText="數量: "+data[q].length;
+        el.appendChild(counter);
+
+        const btn=document.createElement("button");
+        btn.className="add-btn";
+        btn.innerText="新增";
+        btn.onclick=()=>addCard(q);
+        el.appendChild(btn);
+
+        render(q);
+    });
+}
+
+function addCard(q){
+    data[q].push({
+        title:"標題",
+        content:"內容",
+        dueDate:"",
+        completed:false
+    });
+    save();
+    render(q);
+}
+
+function deleteCard(q,i){
+    data[q].splice(i,1);
+    save();
+    render(q);
+}
+
+function moveCard(from,to,index){
+    const item=data[from].splice(index,1)[0];
+    data[to].push(item);
+    save();
+    render(from);
+    render(to);
+}
+
+function render(q){
+    const quadrant=document.getElementById(q);
+    quadrant.querySelectorAll(".card-container, .clear")
+        .forEach(el=>el.remove());
+
+    quadrant.querySelector(".counter").innerText="數量: "+data[q].length;
+
+    // ⭐ 自動依日期排序（未設定日期排最後）
+    data[q].sort((a,b)=>{
+        if(!a.dueDate) return 1;
+        if(!b.dueDate) return -1;
+        return new Date(a.dueDate)-new Date(b.dueDate);
+    });
+
+    const items=data[q];
+    if(items.length===0){
+        const clear=document.createElement("div");
+        clear.className="clear";
+        clear.innerText="clear";
+        quadrant.appendChild(clear);
+        return;
+    }
+
+    const container=document.createElement("div");
+    container.className="card-container";
+
+    items.forEach((item,i)=>{
+        const card=document.createElement("div");
+        card.className="card";
+        card.draggable=true;
+
+        card.addEventListener("dragstart",e=>{
+            if(e.target.tagName==="A"){
+                e.preventDefault();
+                return;
+            }
+            e.dataTransfer.setData("text",
+                JSON.stringify({from:q,index:i})
+            );
+        });
+
+        const del=document.createElement("div");
+        del.className="delete-btn";
+        del.innerHTML="✕";
+        del.onclick=()=>deleteCard(q,i);
+
+        const title=createEditable("h3",item.title,
+            val=>{data[q][i].title=val;save();}
+        );
+
+        const content=createEditable("p",item.content,
+            val=>{data[q][i].content=val;save();}
+        );
+
+        card.appendChild(del);
+        card.appendChild(title);
+        // ===== 任務控制區 =====
+        const controlBar=document.createElement("div");
+        controlBar.style.display="flex";
+        controlBar.style.justifyContent="space-between";
+        controlBar.style.alignItems="center";
+        controlBar.style.marginTop="8px";
+        controlBar.style.gap="6px";
+
+        // ✅ 完成勾選
+        const checkbox=document.createElement("input");
+        checkbox.type="checkbox";
+        checkbox.checked=item.completed;
+
+        checkbox.onchange=()=>{
+            data[q][i].completed=checkbox.checked;
+            save();
+            render(q);
+        };
+
+        // ⭐ 逾期顯示紅色
+        if(item.dueDate && !item.completed){
+            const today=new Date().toISOString().split("T")[0];
+            if(item.dueDate < today){
+                card.style.border="2px solid red";
+            }
+        }
+        // 已完成樣式
+        if(item.completed){
+            card.style.opacity="0.6";
+            card.style.textDecoration="line-through";
+        }
+
+        // 📅 期限
+        const dateInput=document.createElement("input");
+        dateInput.type="date";
+        dateInput.value=item.dueDate || "";
+
+        dateInput.onchange=()=>{
+            data[q][i].dueDate=dateInput.value;
+            save();
+            render(q);
+        };
+
+        controlBar.appendChild(checkbox);
+        controlBar.appendChild(dateInput);
+        // ===== 剩餘天數顯示 =====
+        const remainText=document.createElement("div");
+        remainText.style.fontSize="12px";
+        remainText.style.marginTop="4px";
+
+        if(item.dueDate){
+            const today=new Date();
+            const due=new Date(item.dueDate);
+            const diff=Math.ceil((due - today)/(1000*60*60*24));
+
+            if(diff>0){
+                remainText.innerText="剩餘 "+diff+" 天";
+                remainText.style.color="#007aff";
+            }else if(diff===0){
+                remainText.innerText="今天到期";
+                remainText.style.color="orange";
+            }else{
+                remainText.innerText="已逾期 "+Math.abs(diff)+" 天";
+                remainText.style.color="red";
+            }
+        }
+
+        card.appendChild(remainText);
+
+        card.appendChild(controlBar);
+        card.appendChild(content);
+        container.appendChild(card);
+    });
+
+    quadrant.appendChild(container);
+}
+
+initQuadrants();
+</script>
+
+</body>
+</html>
