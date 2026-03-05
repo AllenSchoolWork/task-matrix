@@ -161,20 +161,12 @@ writing-mode:vertical-rl;text-orientation:upright;}
 document.execCommand("defaultParagraphSeparator", false, "div");
 
 const STORAGE_KEY="matrixDataV7";
-// ⭐ 監聽其他裝置更新
-window.addEventListener("storage",(e)=>{
-    if(e.key===STORAGE_KEY){
-        data=JSON.parse(localStorage.getItem(STORAGE_KEY));
-        initQuadrants();
-    }
-});
 let data=JSON.parse(localStorage.getItem(STORAGE_KEY)) || {
     q1:[],q2:[],q3:[],q4:[]
 };
 
 function save(){
     localStorage.setItem(STORAGE_KEY,JSON.stringify(data));
-    localStorage.setItem("matrixLastUpdate",Date.now());
 }
 
 function linkify(text){
